@@ -24,6 +24,10 @@ google-api-python-client==2.147.0
 google-auth==2.35.0
 google-auth-oauthlib==1.2.1
 python-dotenv==1.0.1
+# Windows only: zoneinfo (used for ZoneInfo("Asia/Kuala_Lumpur") etc.) relies
+# on the OS's IANA tz database, which Windows doesn't ship. Linux/macOS
+# already have system tzdata, so this is a no-op there.
+tzdata; sys_platform == "win32"
 
 # Postgres driver is intentionally NOT listed here - the app defaults to
 # SQLite so local dev needs no compiled DB driver at all. If you're running
