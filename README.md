@@ -33,7 +33,8 @@ and Admin portals.
 ## Quick start
 
 ```bash
-python3 -m venv .venv && source .venv/bin/activate
+python -m venv .venv
+.venv\Scripts\Activate.ps1
 pip install -r requirements-dev.txt   # includes pytest for running the test suite
 
 cp .env.example .env                  # defaults to a local SQLite file - no DB setup needed
@@ -42,7 +43,7 @@ cp .env.example .env                  # defaults to a local SQLite file - no DB 
 #   pip install -r requirements-postgres.txt
 #   then set DATABASE_URL in .env to the postgresql+psycopg://... URL
 
-python -m alembic upgrade head        # creates all tables
+alembic upgrade head        # creates all tables
 python -m app.bootstrap_admin         # creates the first SuperAdmin (see .env for creds)
 python -m app.seed_demo_data          # optional: fills in demo customers/businesses/appointments
 
