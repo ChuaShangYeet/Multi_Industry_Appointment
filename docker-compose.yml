@@ -1,0 +1,25 @@
+version: "3.9"
+
+# Local dev convenience: a real Postgres instance so you're testing against
+# the same engine you'd run in production. The app itself doesn't need this
+# - it runs fine against the default SQLite file too (see .env.example).
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: appointments
+      POSTGRES_PASSWORD: appointments
+      POSTGRES_DB: appointments
+    ports:
+      - "5432:5432"
+    volumes:
+      - appointments_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U appointments"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  appointments_pgdata:

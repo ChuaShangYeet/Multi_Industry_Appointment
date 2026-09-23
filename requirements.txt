@@ -1,0 +1,30 @@
+fastapi==0.115.0
+uvicorn[standard]==0.31.0
+# Range, not an exact pin: SQLAlchemy 2.0.35's declarative Mapped[] type
+# scanner (used by every model in app/models/) crashes on newer Python
+# releases whose typing internals changed (TypeError in
+# sqlalchemy.util.typing.make_union_type) - fixed in a later 2.0.x patch.
+# A floor above the broken version lets pip pick whatever's newest.
+sqlalchemy>=2.0.36,<3
+alembic>=1.13,<2
+# Range, not an exact pin: pydantic ships pydantic-core as a compiled Rust
+# extension, and an old exact version can lack a prebuilt wheel for newer
+# Python releases (forcing a from-source build that needs a Rust toolchain
+# new enough to target that Python version). A range lets pip pick whatever
+# version already has a wheel for your interpreter.
+pydantic>=2.9,<3
+pydantic-settings>=2.5,<3
+email-validator==2.2.0
+phonenumbers==9.0.39
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+bcrypt==4.0.1
+python-multipart==0.0.12
+google-api-python-client==2.147.0
+google-auth==2.35.0
+google-auth-oauthlib==1.2.1
+python-dotenv==1.0.1
+
+# Postgres driver is intentionally NOT listed here - the app defaults to
+# SQLite so local dev needs no compiled DB driver at all. If you're running
+# against Postgres, also install requirements-postgres.txt (see README).

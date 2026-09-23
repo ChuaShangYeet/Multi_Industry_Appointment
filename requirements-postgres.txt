@@ -1,0 +1,10 @@
+# Install this in addition to requirements.txt only if you're running
+# against PostgreSQL (DATABASE_URL=postgresql+psycopg://...).
+#
+# We use psycopg (v3), not psycopg2-binary: psycopg2-binary's project
+# publishes prebuilt wheels for new Python releases slowly (often missing
+# them entirely on Windows for the latest interpreter), which forces pip to
+# compile it from source and typically fails without a full C build
+# toolchain configured exactly right. psycopg[binary] tracks new Python
+# versions much faster.
+psycopg[binary]>=3.1,<4
