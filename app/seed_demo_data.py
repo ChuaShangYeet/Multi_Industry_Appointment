@@ -35,8 +35,10 @@ from app.models.appointment import Appointment
 from app.models.business import Business
 from app.models.details import CarServiceDetails, GeneralServiceDetails, HotelDetails, HotelRoomItem, RestaurantDetails
 from app.models.resource import Service, SpaceInventory, Staff
+from app.models.review import Review
 from app.models.user import User
 from app.security import hash_password
+from app.services.reviews import recompute_business_rating
 
 DEMO_PASSWORD = "Password123!"
 MARKER_BUSINESS_EMAIL = "salon.demo@example.com"
@@ -132,7 +134,12 @@ def main() -> None:
         # looking at the Business Details page has a real-looking number to call.
         _phone_suffixes = count(23456789)
 
-        def make_business(email, name, category, city, rating, rating_count, hours=None):
+        # average_rating/rating_count are deliberately NOT set here - they're
+        # a denormalized cache recomputed from real Review rows (see
+        # app.services.reviews.recompute_business_rating), never hand-set.
+        # Each demo business gets a real Completed appointment + Review
+        # below instead, so the ratings you see are genuinely backed by data.
+        def make_business(email, name, category, city, hours=None):
             biz = Business(
                 email=email,
                 password_hash=hash_password(DEMO_PASSWORD),
@@ -144,8 +151,6 @@ def main() -> None:
                 city=city,
                 cover_image_url=f"https://picsum.photos/seed/{email.split('@')[0]}/640/400",
                 phone_number=f"+603{next(_phone_suffixes)}",
-                average_rating=rating,
-                rating_count=rating_count,
                 operating_hours=hours or DEFAULT_OPERATING_HOURS,
                 timezone=BUSINESS_TIMEZONE,
                 currency="MYR",
@@ -154,15 +159,15 @@ def main() -> None:
             db.flush()
             return biz
 
-        salon = make_business(MARKER_BUSINESS_EMAIL, "Sarah's Hair Salon", BusinessCategory.SALON, "Kuala Lumpur", 4.7, 132)
-        spa = make_business("spa.demo@example.com", "Serenity Spa", BusinessCategory.SPA, "Petaling Jaya", 4.9, 87)
-        car = make_business("auto.demo@example.com", "QuickFix Auto Service", BusinessCategory.CAR_SERVICE, "Subang Jaya", 4.3, 54)
-        pro = make_business("tax.demo@example.com", "Ahmad & Co Tax Consultants", BusinessCategory.PROFESSIONAL, "Kuala Lumpur", 4.8, 21)
-        restaurant = make_business("restaurant.demo@example.com", "The Golden Spoon", BusinessCategory.RESTAURANT, "Bangsar", 4.5, 210)
-        hotel = make_business("hotel.demo@example.com", "Sunset Beach Hotel", BusinessCategory.HOTEL, "Penang", 4.6, 340)
+        salon = make_business(MARKER_BUSINESS_EMAIL, "Sarah's Hair Salon", BusinessCategory.SALON, "Kuala Lumpur")
+        spa = make_business("spa.demo@example.com", "Serenity Spa", BusinessCategory.SPA, "Petaling Jaya")
+        car = make_business("auto.demo@example.com", "QuickFix Auto Service", BusinessCategory.CAR_SERVICE, "Subang Jaya")
+        pro = make_business("tax.demo@example.com", "Ahmad & Co Tax Consultants", BusinessCategory.PROFESSIONAL, "Kuala Lumpur")
+        restaurant = make_business("restaurant.demo@example.com", "The Golden Spoon", BusinessCategory.RESTAURANT, "Bangsar")
+        hotel = make_business("hotel.demo@example.com", "Sunset Beach Hotel", BusinessCategory.HOTEL, "Penang")
 
         # Also leave one Pending business so you can try the admin-approval flow.
-        make_business("newspa.demo@example.com", "New Wave Nails", BusinessCategory.SPA, "Cheras", 0.0, 0)
+        make_business("newspa.demo@example.com", "New Wave Nails", BusinessCategory.SPA, "Cheras")
         db.query(Business).filter(Business.email == "newspa.demo@example.com").first().approval_status = (
             BusinessApprovalStatus.PENDING
         )
@@ -291,6 +296,61 @@ def main() -> None:
         )
         db.add(GeneralServiceDetails(appointment_id=a7.id, staff_requested_id=lily_wong.id, service_specifics={}))
 
+        # 8-12) One more Completed appointment per remaining business, purely
+        # so each one has something reviewable below - Business.average_rating
+        # is real now (see app.services.reviews), not hand-set, so every demo
+        # business needs an actual Completed appointment + Review behind its
+        # rating rather than a number pulled out of thin air.
+        a8 = add_appointment(
+            user_id=john.id, business_id=salon.id, service_id=haircut.id, staff_id=sarah_lee.id,
+            appointment_type=AppointmentType.SALON, start_datetime=_past(5),
+            end_datetime=_past(5) + timedelta(minutes=30), status=AppointmentStatus.COMPLETED,
+        )
+        db.add(GeneralServiceDetails(appointment_id=a8.id, staff_requested_id=sarah_lee.id, service_specifics={"note": "Fade cut"}))
+
+        a9 = add_appointment(
+            user_id=aisha.id, business_id=spa.id, service_id=massage.id, staff_id=lily_wong.id,
+            appointment_type=AppointmentType.SPA, start_datetime=_past(4),
+            end_datetime=_past(4) + timedelta(minutes=60), status=AppointmentStatus.COMPLETED,
+        )
+        db.add(GeneralServiceDetails(appointment_id=a9.id, staff_requested_id=lily_wong.id, service_specifics={}))
+
+        a10 = add_appointment(
+            user_id=jane.id, business_id=car.id, service_id=oil_change.id, staff_id=ahmad_ismail.id,
+            appointment_type=AppointmentType.CAR, start_datetime=_past(6),
+            end_datetime=_past(6) + timedelta(minutes=45), status=AppointmentStatus.COMPLETED,
+        )
+        db.add(CarServiceDetails(appointment_id=a10.id, car_brand="Honda", car_model="Civic", plate_number="ABC5678", service_type="Oil Change"))
+
+        a11 = add_appointment(
+            user_id=john.id, business_id=restaurant.id, service_id=table_booking.id, space_inventory_id=indoor_table.id,
+            appointment_type=AppointmentType.RESTAURANT, start_datetime=_past(2, 19),
+            end_datetime=_past(2, 19) + timedelta(minutes=90), status=AppointmentStatus.COMPLETED,
+        )
+        db.add(RestaurantDetails(appointment_id=a11.id, no_of_pax=2, table_preference=TablePreference.INDOOR))
+
+        a12 = add_appointment(
+            user_id=jane.id, business_id=hotel.id, service_id=room_booking.id, space_inventory_id=deluxe_room.id,
+            appointment_type=AppointmentType.HOTEL, start_datetime=_past(12, 15),
+            end_datetime=_past(9, 11), status=AppointmentStatus.COMPLETED,
+        )
+        db.add(HotelDetails(appointment_id=a12.id, room_type="Deluxe Double Room", no_of_rooms=1, no_of_guests=2, expected_check_in_time="15:00", expected_check_out_time="11:00"))
+        db.add(HotelRoomItem(appointment_id=a12.id, space_inventory_id=deluxe_room.id, quantity=1))
+        db.flush()
+
+        # --- Reviews - the real source behind each business's average_rating/rating_count ---
+        db.add_all([
+            Review(appointment_id=a6.id, user_id=aisha.id, business_id=pro.id, rating=5, comment="Thorough and explained everything clearly."),
+            Review(appointment_id=a8.id, user_id=john.id, business_id=salon.id, rating=5, comment="Best fade I've had in KL."),
+            Review(appointment_id=a9.id, user_id=aisha.id, business_id=spa.id, rating=5, comment="Extremely relaxing, will be back."),
+            Review(appointment_id=a10.id, user_id=jane.id, business_id=car.id, rating=4, comment="Quick service, slightly pricier than expected."),
+            Review(appointment_id=a11.id, user_id=john.id, business_id=restaurant.id, rating=4, comment="Great food, table was a bit cramped."),
+            Review(appointment_id=a12.id, user_id=jane.id, business_id=hotel.id, rating=5, comment="Beautiful sea view, spotless room."),
+        ])
+        db.flush()
+        for business in (salon, spa, car, pro, restaurant, hotel):
+            recompute_business_rating(db, business.id)
+
         db.commit()
 
         print("Seed complete.\n")
@@ -303,8 +363,11 @@ def main() -> None:
         print(f"             restaurant.demo@example.com, hotel.demo@example.com  (password: {DEMO_PASSWORD})")
         print(f"             + newspa.demo@example.com (still Pending - try approving it as admin)")
         print("\nAppointments seeded: 1 Confirmed, 1 Pending, 1 Cancelled, 1 Confirmed (restaurant),")
-        print("                      1 Pending (hotel), 1 Completed, 1 Confirmed (further out) = 7 total,")
+        print("                      1 Pending (hotel), 1 Completed, 1 Confirmed (further out),")
+        print("                      + 5 more Completed (one per remaining business) = 12 total,")
         print("                      spanning every category and every lifecycle status.")
+        print("Reviews    : 6 real reviews (one per business) - average_rating/rating_count are now")
+        print("             computed from these, not hand-set. POST /appointments/{id}/review to add more.")
     finally:
         db.close()
 

@@ -5,6 +5,7 @@ from typing import Any, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.enums import AppointmentStatus, AppointmentType, TablePreference
+from app.schemas.review import ReviewOut
 from app.services.currency import convert_amount
 
 # ---------------------------------------------------------------------------
@@ -178,6 +179,10 @@ class AppointmentOut(BaseModel):
     updated_at: datetime
     details: Optional[dict[str, Any]] = None
     user: Optional[UserBriefOut] = None  # populated for the business/admin views
+    # Set once the customer has left a review for this appointment - lets
+    # the frontend show "Leave a review" only when status is Completed AND
+    # this is still null, rather than after every appointment.
+    review: Optional[ReviewOut] = None
 
     @classmethod
     def from_model(cls, appt, *, include_user: bool = False, target_currency: Optional[str] = None) -> "AppointmentOut":
@@ -258,4 +263,5 @@ class AppointmentOut(BaseModel):
             updated_at=appt.updated_at,
             details=details,
             user=UserBriefOut.model_validate(appt.user) if include_user and appt.user else None,
+            review=ReviewOut.from_model(appt.review) if appt.review else None,
         )

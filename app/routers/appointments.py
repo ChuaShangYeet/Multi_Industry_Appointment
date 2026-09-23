@@ -20,8 +20,10 @@ from app.models.appointment import Appointment
 from app.models.business import Business
 from app.models.details import CarServiceDetails, GeneralServiceDetails, HotelDetails, HotelRoomItem, RestaurantDetails
 from app.models.resource import Service, SpaceInventory, Staff
+from app.models.review import Review
 from app.models.user import User
 from app.schemas.appointment import AppointmentCreate, AppointmentOut, AppointmentStatusUpdate
+from app.schemas.review import ReviewCreate, ReviewOut
 from app.security import Role
 from app.services import google_calendar, state_machine
 from app.services.availability import (
@@ -32,6 +34,7 @@ from app.services.availability import (
     resolve_appointment_type,
 )
 from app.services.currency import currency_for_phone_number
+from app.services.reviews import recompute_business_rating
 from app.services.state_machine import InvalidTransitionError
 
 router = APIRouter(prefix="/appointments", tags=["appointments"])
@@ -47,6 +50,7 @@ _EAGER_LOAD = (
     joinedload(Appointment.car_service_details),
     joinedload(Appointment.general_service_details),
     joinedload(Appointment.room_items).joinedload(HotelRoomItem.space_inventory),
+    joinedload(Appointment.review).joinedload(Review.user),
 )
 
 
@@ -434,6 +438,43 @@ def complete_appointment(
     db.refresh(appointment)
     google_calendar.sync_appointment_updated(appointment)
     return AppointmentOut.from_model(appointment, include_user=True)
+
+
+# ---------------------------------------------------------------------------
+# Customer reviews a Completed appointment. This is the real source behind
+# Business.average_rating/rating_count (see app.services.reviews) - it used
+# to be hand-set seed data with no actual customer-facing way to produce it.
+# ---------------------------------------------------------------------------
+@router.post("/{appointment_id}/review", response_model=ReviewOut, status_code=status.HTTP_201_CREATED)
+def create_review(
+    appointment_id: int,
+    payload: ReviewCreate,
+    current_user: User = Depends(get_current_customer),
+    db: Session = Depends(get_db),
+):
+    appointment = db.query(Appointment).filter(Appointment.id == appointment_id).first()
+    if appointment is None or appointment.user_id != current_user.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Appointment not found.")
+    if appointment.status != AppointmentStatus.COMPLETED:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Only a Completed appointment can be reviewed.")
+
+    existing = db.query(Review.id).filter(Review.appointment_id == appointment_id).first()
+    if existing is not None:
+        raise HTTPException(status.HTTP_409_CONFLICT, "This appointment has already been reviewed.")
+
+    review = Review(
+        appointment_id=appointment.id,
+        user_id=current_user.id,
+        business_id=appointment.business_id,
+        rating=payload.rating,
+        comment=payload.comment,
+    )
+    db.add(review)
+    db.flush()
+    recompute_business_rating(db, appointment.business_id)
+    db.commit()
+    db.refresh(review)
+    return ReviewOut.from_model(review)
 
 
 # ---------------------------------------------------------------------------

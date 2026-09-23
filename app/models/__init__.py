@@ -16,6 +16,7 @@ from app.models.details import (  # noqa: F401
     RestaurantDetails,
 )
 from app.models.resource import Service, SpaceInventory, Staff  # noqa: F401
+from app.models.review import Review  # noqa: F401
 from app.models.user import User  # noqa: F401
 
 __all__ = [
@@ -32,4 +33,5 @@ __all__ = [
     "HotelRoomItem",
     "CarServiceDetails",
     "GeneralServiceDetails",
+    "Review",
 ]

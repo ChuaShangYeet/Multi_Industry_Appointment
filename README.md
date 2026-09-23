@@ -33,8 +33,7 @@ and Admin portals.
 ## Quick start
 
 ```bash
-python -m venv .venv
-.venv\Scripts\Activate.ps1
+python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements-dev.txt   # includes pytest for running the test suite
 
 cp .env.example .env                  # defaults to a local SQLite file - no DB setup needed
@@ -43,7 +42,11 @@ cp .env.example .env                  # defaults to a local SQLite file - no DB 
 #   pip install -r requirements-postgres.txt
 #   then set DATABASE_URL in .env to the postgresql+psycopg://... URL
 
-alembic upgrade head        # creates all tables
+# Use the `alembic` command directly, not `python -m alembic` - this repo's own
+# top-level alembic/ folder (the migrations directory) can shadow the installed
+# package when run with -m on some platforms, causing a confusing
+# "'alembic' is a package and cannot be directly executed" error.
+alembic upgrade head                  # creates all tables
 python -m app.bootstrap_admin         # creates the first SuperAdmin (see .env for creds)
 python -m app.seed_demo_data          # optional: fills in demo customers/businesses/appointments
 

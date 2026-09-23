@@ -6,12 +6,13 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import or_
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.database import get_db
 from app.dependencies import get_current_business_account
 from app.enums import BusinessApprovalStatus, BusinessCategory
 from app.models.business import Business
+from app.models.review import Review
 from app.schemas.business import (
     BusinessCardOut,
     BusinessPublicDetailOut,
@@ -20,6 +21,7 @@ from app.schemas.business import (
     GoogleCalendarIdIn,
 )
 from app.schemas.common import Page
+from app.schemas.review import ReviewOut
 
 router = APIRouter(prefix="/businesses", tags=["businesses"])
 
@@ -97,3 +99,27 @@ def get_business_detail(business_id: int, db: Session = Depends(get_db)):
     if business is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Business not found.")
     return BusinessPublicDetailOut.model_validate(business)
+
+
+@router.get("/{business_id}/reviews", response_model=Page[ReviewOut])
+def list_business_reviews(
+    business_id: int,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    db: Session = Depends(get_db),
+):
+    """Public - the real reviews behind a business's average_rating/rating_count (see app.services.reviews)."""
+    business = (
+        db.query(Business)
+        .filter(Business.id == business_id, Business.approval_status == BusinessApprovalStatus.APPROVED)
+        .first()
+    )
+    if business is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Business not found.")
+
+    query = db.query(Review).options(joinedload(Review.user)).filter(Review.business_id == business_id)
+    total = query.count()
+    items = query.order_by(Review.created_at.desc()).offset((page - 1) * page_size).limit(page_size).all()
+    return Page[ReviewOut](
+        items=[ReviewOut.from_model(r) for r in items], total=total, page=page, page_size=page_size
+    )

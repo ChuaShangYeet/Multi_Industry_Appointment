@@ -73,6 +73,11 @@ class Business(Base, TimestampMixin):
     # number to call, distinct from the business's login email.
     phone_number: Mapped[Optional[str]] = mapped_column(String(32))
     cover_image_url: Mapped[Optional[str]] = mapped_column(String(1000))
+    # Denormalized cache, recomputed from the real app.models.review.Review
+    # rows every time one is written (see
+    # app.services.reviews.recompute_business_rating) - kept on Business
+    # itself so the discovery gallery can sort/filter without joining every
+    # business's reviews on every request. Never written to directly.
     average_rating: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
     rating_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 

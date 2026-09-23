@@ -70,6 +70,11 @@ class Appointment(Base, TimestampMixin):
     # stay can combine several room types (see app.models.details.HotelRoomItem).
     room_items: Mapped[list["HotelRoomItem"]] = relationship(back_populates="appointment", cascade="all, delete-orphan")
 
+    # At most one - a customer may only review an appointment once it's
+    # Completed (see the appointments router), and only once ever (see
+    # Review.appointment_id's unique constraint).
+    review: Mapped[Optional["Review"]] = relationship(back_populates="appointment", uselist=False, cascade="all, delete-orphan")
+
     @property
     def is_locked(self) -> bool:
         """Confirmed/Cancelled/Completed appointments can no longer transition via the normal business flow."""
