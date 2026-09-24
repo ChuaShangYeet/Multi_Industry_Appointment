@@ -67,8 +67,19 @@ class SpaceInventory(Base, TimestampMixin):
     # Per-unit price - the nightly rate for a Hotel Room category (a
     # "Suite" and a "Deluxe Room" charge differently; Service.price is one
     # flat rate shared by every room type, which is the wrong place for
-    # this). Unused by Restaurant/Other inventory today.
+    # this). Unused by Restaurant/Other inventory today. This doubles as
+    # the BASE price for dynamic pricing (see is_dynamic_pricing_enabled
+    # below and app.services.availability.calculate_dynamic_price) - there
+    # is deliberately no separate base_price column, since that would just
+    # be a second source of truth for the same number.
     price: Mapped[Optional[float]] = mapped_column(Float)
+
+    # When true, the public inventory listing (see the resources router)
+    # quotes a real-time price derived from `price` above, adjusted for
+    # current utilization/lead time/day-of-week (see
+    # app.services.availability.calculate_dynamic_price) instead of the
+    # flat `price`. Off by default - a business opts in per room/table type.
+    is_dynamic_pricing_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 

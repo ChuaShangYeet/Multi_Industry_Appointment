@@ -34,7 +34,7 @@ from app.schemas.resource import (
     StaffUpdate,
 )
 from app.schemas.validators import CURRENCY_CODES
-from app.services.availability import available_units
+from app.services.availability import available_units, calculate_resource_dynamic_price
 from app.services.currency import convert_amount
 
 router = APIRouter(prefix="/businesses", tags=["resources"])
@@ -303,6 +303,12 @@ def list_public_inventory(
             out.available_quantity = available_units(
                 db, space_inventory=item, start_datetime=start_datetime, end_datetime=end_datetime
             )
+            out.dynamic_price = calculate_resource_dynamic_price(
+                db, space_inventory=item, start_datetime=start_datetime, end_datetime=end_datetime
+            )
         if target is not None:
-            out.converted_price = convert_amount(item.price, base=business.currency, target=target)
+            # Convert whichever price the customer would actually pay - the
+            # real-time dynamic price when one was computed, else the flat rate.
+            effective_price = out.dynamic_price if out.dynamic_price is not None else item.price
+            out.converted_price = convert_amount(effective_price, base=business.currency, target=target)
     return results

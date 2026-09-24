@@ -4,7 +4,7 @@ THE AVAILABILITY ENGINE (PART 2.2 / Backend Architecture #3).
 Pure query/validation logic, no HTTP concerns - the appointments router
 catches AvailabilityConflictError and turns it into a 409 response.
 """
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from sqlalchemy import func, select
@@ -132,6 +132,108 @@ def available_units(
         db, space_inventory=space_inventory, start_datetime=start_datetime, end_datetime=end_datetime
     )
     return max(0, space_inventory.total_quantity - occupied)
+
+
+def calculate_utilization_rate(
+    db: Session, *, space_inventory: SpaceInventory, start_datetime: datetime, end_datetime: datetime
+) -> float:
+    """
+    Fraction of this resource's capacity already occupied for the requested
+    window, in [0.0, 1.0] - the "demand vs supply" input to
+    calculate_dynamic_price below. Built on count_occupied_units (the same
+    occupancy count check_space_availability uses), not a separate query,
+    so utilization and the hard capacity check can never disagree about
+    what "occupied" means.
+    """
+    if space_inventory.total_quantity <= 0:
+        return 0.0
+    occupied = count_occupied_units(
+        db, space_inventory=space_inventory, start_datetime=start_datetime, end_datetime=end_datetime
+    )
+    return min(1.0, occupied / space_inventory.total_quantity)
+
+
+# THE DYNAMIC PRICING ENGINE.
+#
+# Multipliers stack multiplicatively (not added) - e.g. a >80%-utilized
+# Friday inside the 24h last-minute window is 1.20 x 1.15 x 1.10, not
+# 1 + 0.20 + 0.15 + 0.10. This is the conventional way surge multipliers
+# compose (airlines/Klook-style yield pricing) and avoids the discount and
+# surge rules fighting each other in a flat sum.
+_SURGE_HIGH_UTILIZATION = 0.80
+_SURGE_HIGH_MULTIPLIER = 1.20
+_DISCOUNT_LOW_UTILIZATION = 0.30
+_DISCOUNT_LOW_MULTIPLIER = 0.90
+_LAST_MINUTE_WINDOW = timedelta(hours=24)
+_LAST_MINUTE_UTILIZATION_FLOOR = 0.50
+_LAST_MINUTE_MULTIPLIER = 1.15
+_WEEKEND_MULTIPLIER = 1.10
+_WEEKEND_DAYS = {4, 5}  # datetime.weekday(): Monday=0 ... Friday=4, Saturday=5
+
+
+def calculate_dynamic_price(
+    base_price: float, utilization_rate: float, booking_date: datetime, request_time: datetime
+) -> float:
+    """
+    Real-time price for one resource, given how full it already is and how
+    soon the requested date is - base_price times whichever of these
+    multipliers apply:
+
+    - Capacity surge: utilization > 80% -> x1.20. utilization < 30% -> x0.90.
+      (Between 30-80%, no capacity-driven adjustment.)
+    - Last-minute premium: booking_date is within the next 24h of
+      request_time AND utilization > 50% -> an additional x1.15. Only
+      applies to a booking that is still in the future relative to
+      request_time - a past booking_date (backfilled/historical data) never
+      triggers "urgency".
+    - Weekend/peak surge: booking_date falls on a Friday or Saturday ->
+      an additional x1.10.
+
+    booking_date/request_time must both be timezone-aware (this codebase
+    never stores/accepts naive datetimes - see the appointments router).
+    """
+    if booking_date.tzinfo is None or request_time.tzinfo is None:
+        raise ValueError("booking_date and request_time must both be timezone-aware.")
+
+    multiplier = 1.0
+
+    if utilization_rate > _SURGE_HIGH_UTILIZATION:
+        multiplier *= _SURGE_HIGH_MULTIPLIER
+    elif utilization_rate < _DISCOUNT_LOW_UTILIZATION:
+        multiplier *= _DISCOUNT_LOW_MULTIPLIER
+
+    time_until_booking = booking_date - request_time
+    if timedelta(0) <= time_until_booking <= _LAST_MINUTE_WINDOW and utilization_rate > _LAST_MINUTE_UTILIZATION_FLOOR:
+        multiplier *= _LAST_MINUTE_MULTIPLIER
+
+    if booking_date.weekday() in _WEEKEND_DAYS:
+        multiplier *= _WEEKEND_MULTIPLIER
+
+    return round(base_price * multiplier, 2)
+
+
+def calculate_resource_dynamic_price(
+    db: Session,
+    *,
+    space_inventory: SpaceInventory,
+    start_datetime: datetime,
+    end_datetime: datetime,
+    request_time: Optional[datetime] = None,
+) -> Optional[float]:
+    """
+    Convenience wrapper tying the two functions above to one resource -
+    what the resources router actually calls. None whenever there is
+    nothing to compute a dynamic price from: the business never opted this
+    resource into dynamic pricing, or it has no base price set.
+    """
+    if not space_inventory.is_dynamic_pricing_enabled or space_inventory.price is None:
+        return None
+    utilization_rate = calculate_utilization_rate(
+        db, space_inventory=space_inventory, start_datetime=start_datetime, end_datetime=end_datetime
+    )
+    return calculate_dynamic_price(
+        space_inventory.price, utilization_rate, start_datetime, request_time or datetime.now(timezone.utc)
+    )
 
 
 def check_space_availability(
