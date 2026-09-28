@@ -4,16 +4,18 @@ THE AVAILABILITY ENGINE (PART 2.2 / Backend Architecture #3).
 Pure query/validation logic, no HTTP concerns - the appointments router
 catches AvailabilityConflictError and turns it into a 409 response.
 """
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.enums import ACTIVE_APPOINTMENT_STATUSES, AppointmentType, SpaceInventoryType
 from app.models.appointment import Appointment
+from app.models.business import Business
 from app.models.details import HotelRoomItem
-from app.models.resource import SpaceInventory, Staff
+from app.models.resource import Service, SpaceInventory, Staff
 
 
 class AvailabilityConflictError(Exception):
@@ -72,6 +74,57 @@ def check_staff_availability(
     overlapping_count = db.scalar(select(func.count()).select_from(Appointment).where(*filters)) or 0
     if overlapping_count >= total_active_staff:
         raise AvailabilityConflictError("No staff are available at the requested time.")
+
+
+_DAY_NAMES = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+
+
+def generate_staff_based_slots(
+    db: Session, *, business: Business, service: Service, on_date: date
+) -> list[tuple[datetime, bool]]:
+    """
+    Discrete bookable start times (as UTC instants) for a staff-based
+    service (Salon/Spa/Car Service/Professional) on one calendar day, at
+    Service.duration_minutes increments across the business's
+    operating_hours for that weekday - each paired with whether at least
+    one staff member is actually free for it, using the SAME
+    check_staff_availability the booking endpoint itself enforces, so a
+    slot marked available here is guaranteed bookable there too. Past
+    slots (relative to now) are omitted rather than shown as unavailable.
+
+    Only meaningful for staff-based categories - a Restaurant/Hotel's
+    capacity is a quantity over a date range, not a list of discrete start
+    times (see list_inventory_for_business's available_quantity instead).
+    """
+    hours = (business.operating_hours or {}).get(_DAY_NAMES[on_date.weekday()])
+    if hours is None:
+        return []  # closed that day
+
+    tz = ZoneInfo(business.timezone)
+    duration = timedelta(minutes=service.duration_minutes)
+    slot_start = datetime.combine(on_date, time.fromisoformat(hours["open"]), tzinfo=tz)
+    day_close = datetime.combine(on_date, time.fromisoformat(hours["close"]), tzinfo=tz)
+
+    now = datetime.now(timezone.utc)
+    slots: list[tuple[datetime, bool]] = []
+    while slot_start + duration <= day_close:
+        slot_end = slot_start + duration
+        start_utc = slot_start.astimezone(timezone.utc)
+        if start_utc > now:
+            try:
+                check_staff_availability(
+                    db,
+                    business_id=business.id,
+                    staff_id=None,
+                    start_datetime=start_utc,
+                    end_datetime=slot_end.astimezone(timezone.utc),
+                )
+                available = True
+            except AvailabilityConflictError:
+                available = False
+            slots.append((start_utc, available))
+        slot_start = slot_end
+    return slots
 
 
 def count_occupied_units(

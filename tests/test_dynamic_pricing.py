@@ -26,6 +26,20 @@ BOOKING_DATE = datetime(2030, 1, 2, 10, 0, tzinfo=timezone.utc)
 REQUEST_TIME = datetime(2030, 1, 1, 8, 0, tzinfo=timezone.utc)
 
 
+def _next_non_weekend_start(days_out: int = 5) -> datetime:
+    """
+    `datetime.now(timezone.utc) + timedelta(days=N)` lands on a different
+    weekday depending on which day the suite happens to run, and if it
+    lands on a Friday/Saturday the weekend surge multiplier changes the
+    expected price out from under a test that isn't testing that rule -
+    nudges forward a day at a time until it lands on neither.
+    """
+    start = datetime.now(timezone.utc) + timedelta(days=days_out)
+    while start.weekday() in (4, 5):  # Friday=4, Saturday=5
+        start += timedelta(days=1)
+    return start
+
+
 # ---------------------------------------------------------------------------
 # calculate_dynamic_price - pure function, no DB
 # ---------------------------------------------------------------------------
@@ -219,7 +233,7 @@ def test_public_inventory_omits_dynamic_price_without_a_date_range(client, db_se
 
 def test_public_inventory_omits_dynamic_price_when_not_enabled(client, db_session):
     _, business_id, _ = _setup_dynamic_hotel(client, db_session, dynamic=False)
-    start = datetime.now(timezone.utc) + timedelta(days=5)
+    start = _next_non_weekend_start()
     resp = client.get(
         f"/api/v1/businesses/{business_id}/inventory",
         params={"start_datetime": start.isoformat(), "end_datetime": (start + timedelta(days=1)).isoformat()},
@@ -232,7 +246,7 @@ def test_public_inventory_omits_dynamic_price_when_not_enabled(client, db_sessio
 def test_public_inventory_surfaces_dynamic_price_for_a_date_range(client, db_session):
     biz_token, business_id, space_id = _setup_dynamic_hotel(client, db_session, total_rooms=2, price=100)
     cust_token = register_customer(client)
-    start = datetime.now(timezone.utc) + timedelta(days=5)
+    start = _next_non_weekend_start()
     end = start + timedelta(days=1)
 
     # Fill both rooms -> 100% utilization -> surge.
@@ -268,7 +282,7 @@ def test_converted_price_reflects_dynamic_price_not_the_flat_rate(client, db_ses
 
     biz_token, business_id, space_id = _setup_dynamic_hotel(client, db_session, total_rooms=1, price=100)
     cust_token = register_customer(client)
-    start = datetime.now(timezone.utc) + timedelta(days=5)
+    start = _next_non_weekend_start()
     end = start + timedelta(days=1)
 
     service_id = client.get("/api/v1/businesses/me/services", headers=auth_headers(biz_token)).json()[0]["id"]

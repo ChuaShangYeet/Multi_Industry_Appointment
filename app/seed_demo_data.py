@@ -60,6 +60,13 @@ def _past(days: int, hour: int = 10) -> datetime:
 
 
 def main() -> None:
+    if settings.SINGLE_TENANT_MODE:
+        print(
+            "SINGLE_TENANT_MODE is true - this script seeds 6 demo businesses for the "
+            "multi-tenant marketplace, which doesn't apply here. Use `python -m app.bootstrap_tenant` instead."
+        )
+        return
+
     Base.metadata.create_all(bind=engine)
     db = SessionLocal()
     try:

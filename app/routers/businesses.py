@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import or_
 from sqlalchemy.orm import Session, joinedload
 
+from app.config import settings
 from app.database import get_db
 from app.dependencies import get_current_business_account
 from app.enums import BusinessApprovalStatus, BusinessCategory
@@ -38,7 +39,16 @@ def discover_businesses(
     Discovery Gallery (PART 4.3). Query Scoping (Backend Architecture #2):
     only Approved businesses are ever returned to the public, enforced here
     at the database level rather than trusted to the client.
+
+    Disabled in single-tenant mode (see app.config.Settings.SINGLE_TENANT_MODE)
+    - a marketplace catalog doesn't apply to a one-client-per-instance
+    deployment; use GET /business/profile instead.
     """
+    if settings.SINGLE_TENANT_MODE:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            "Marketplace discovery is disabled in single-tenant mode - use /business/profile instead.",
+        )
     query = db.query(Business).filter(Business.approval_status == BusinessApprovalStatus.APPROVED)
     if category is not None:
         query = query.filter(Business.category == category)

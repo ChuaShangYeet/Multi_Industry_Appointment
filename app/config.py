@@ -58,6 +58,28 @@ class Settings(BaseSettings):
     FIRST_ADMIN_EMAIL: str = "admin@example.com"
     FIRST_ADMIN_PASSWORD: str = "ChangeThis123!"
 
+    # --- Single-tenant deployment (Path 2: one dedicated backend instance per
+    # client, fronted by a headless site of theirs - e.g. WordPress - with no
+    # marketplace of its own) ---
+    # Defaults to False (this codebase's normal, multi-tenant marketplace
+    # behavior) rather than True: a client's single-tenant deployment turns
+    # this on in ITS OWN .env, but the shared codebase/test suite must keep
+    # exercising the multi-tenant discovery/approval workflow unchanged.
+    # See app.services.tenant and app.routers.business_context.
+    SINGLE_TENANT_MODE: bool = False
+    # Used only by `python -m app.bootstrap_tenant` to provision the one
+    # Business row a single-tenant instance serves - see that script. Not
+    # read anywhere else; every request-time lookup of "the" business goes
+    # through app.services.tenant.get_the_tenant_business instead, since by
+    # the time requests are being served the business already exists.
+    TENANT_BUSINESS_EMAIL: str = "owner@example.com"
+    TENANT_BUSINESS_PASSWORD: str = "ChangeThis123!"
+    TENANT_BUSINESS_NAME: str = "My Business"
+    TENANT_BUSINESS_CATEGORY: str = "Salon"
+    TENANT_BUSINESS_CITY: str = ""
+    TENANT_BUSINESS_TIMEZONE: str = "Asia/Kuala_Lumpur"
+    TENANT_BUSINESS_CURRENCY: str = "MYR"
+
 
 @lru_cache
 def get_settings() -> Settings:

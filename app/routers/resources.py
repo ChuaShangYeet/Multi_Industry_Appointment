@@ -33,9 +33,8 @@ from app.schemas.resource import (
     StaffOut,
     StaffUpdate,
 )
-from app.schemas.validators import CURRENCY_CODES
 from app.services.availability import available_units, calculate_resource_dynamic_price
-from app.services.currency import convert_amount
+from app.services.currency import convert_amount, normalize_target_currency
 
 router = APIRouter(prefix="/businesses", tags=["resources"])
 
@@ -51,14 +50,66 @@ def _get_approved_business_or_404(business_id: int, db: Session) -> Business:
     return business
 
 
-def _normalize_target_currency(target_currency: Optional[str]) -> Optional[str]:
-    """None means "no conversion requested" - anything else must be a currency we recognize."""
-    if target_currency is None:
-        return None
-    code = target_currency.strip().upper()
-    if code not in CURRENCY_CODES:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"'{target_currency}' is not a supported currency code.")
-    return code
+def _normalize_target_currency_or_422(target_currency: Optional[str]) -> Optional[str]:
+    try:
+        return normalize_target_currency(target_currency)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+
+
+def list_services_for_business(db: Session, business: Business, target_currency: Optional[str]) -> list[ServiceOut]:
+    """
+    Shared by the multi-tenant `/{business_id}/services` route and the
+    single-tenant `/business/services` convenience route (see
+    app.routers.business_context) - one query/conversion implementation,
+    not two copies that could drift apart.
+    """
+    services = db.query(Service).filter(Service.business_id == business.id, Service.is_active.is_(True)).all()
+    results = [ServiceOut.model_validate(s) for s in services]
+    if target_currency is not None:
+        for service, out in zip(services, results):
+            out.converted_price = convert_amount(service.price, base=business.currency, target=target_currency)
+    return results
+
+
+def list_staff_for_business(db: Session, business: Business) -> list[Staff]:
+    return db.query(Staff).filter(Staff.business_id == business.id, Staff.is_active.is_(True)).all()
+
+
+def list_inventory_for_business(
+    db: Session,
+    business: Business,
+    start_datetime: Optional[datetime],
+    end_datetime: Optional[datetime],
+    target_currency: Optional[str],
+) -> list[SpaceInventoryOut]:
+    """Shared by `/{business_id}/inventory` and `/business/inventory` - see list_services_for_business."""
+    if (start_datetime is None) != (end_datetime is None):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "start_datetime and end_datetime must be given together.")
+    if start_datetime is not None:
+        if start_datetime.tzinfo is None or end_datetime.tzinfo is None:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY, "start_datetime and end_datetime must include a UTC offset."
+            )
+        if end_datetime <= start_datetime:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "end_datetime must be after start_datetime.")
+
+    items = db.query(SpaceInventory).filter(SpaceInventory.business_id == business.id, SpaceInventory.is_active.is_(True)).all()
+    results = [SpaceInventoryOut.model_validate(item) for item in items]
+    for item, out in zip(items, results):
+        if start_datetime is not None:
+            out.available_quantity = available_units(
+                db, space_inventory=item, start_datetime=start_datetime, end_datetime=end_datetime
+            )
+            out.dynamic_price = calculate_resource_dynamic_price(
+                db, space_inventory=item, start_datetime=start_datetime, end_datetime=end_datetime
+            )
+        if target_currency is not None:
+            # Convert whichever price the customer would actually pay - the
+            # real-time dynamic price when one was computed, else the flat rate.
+            effective_price = out.dynamic_price if out.dynamic_price is not None else item.price
+            out.converted_price = convert_amount(effective_price, base=business.currency, target=target_currency)
+    return results
 
 
 # ===========================================================================
@@ -129,14 +180,8 @@ def list_public_services(business_id: int, target_currency: Optional[str] = None
     customer browsing in a different currency see roughly what they'd pay.
     """
     business = _get_approved_business_or_404(business_id, db)
-    target = _normalize_target_currency(target_currency)
-
-    services = db.query(Service).filter(Service.business_id == business_id, Service.is_active.is_(True)).all()
-    results = [ServiceOut.model_validate(s) for s in services]
-    if target is not None:
-        for service, out in zip(services, results):
-            out.converted_price = convert_amount(service.price, base=business.currency, target=target)
-    return results
+    target = _normalize_target_currency_or_422(target_currency)
+    return list_services_for_business(db, business, target)
 
 
 # ===========================================================================
@@ -195,8 +240,8 @@ def delete_my_staff(
 
 @router.get("/{business_id}/staff", response_model=list[StaffOut])
 def list_public_staff(business_id: int, db: Session = Depends(get_db)):
-    _get_approved_business_or_404(business_id, db)
-    return db.query(Staff).filter(Staff.business_id == business_id, Staff.is_active.is_(True)).all()
+    business = _get_approved_business_or_404(business_id, db)
+    return list_staff_for_business(db, business)
 
 
 # ===========================================================================
@@ -280,35 +325,5 @@ def list_public_inventory(
     business's own currency and returned as converted_price.
     """
     business = _get_approved_business_or_404(business_id, db)
-    target = _normalize_target_currency(target_currency)
-
-    if (start_datetime is None) != (end_datetime is None):
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "start_datetime and end_datetime must be given together.")
-    if start_datetime is not None:
-        if start_datetime.tzinfo is None or end_datetime.tzinfo is None:
-            raise HTTPException(
-                status.HTTP_422_UNPROCESSABLE_ENTITY, "start_datetime and end_datetime must include a UTC offset."
-            )
-        if end_datetime <= start_datetime:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, "end_datetime must be after start_datetime.")
-
-    items = (
-        db.query(SpaceInventory)
-        .filter(SpaceInventory.business_id == business_id, SpaceInventory.is_active.is_(True))
-        .all()
-    )
-    results = [SpaceInventoryOut.model_validate(item) for item in items]
-    for item, out in zip(items, results):
-        if start_datetime is not None:
-            out.available_quantity = available_units(
-                db, space_inventory=item, start_datetime=start_datetime, end_datetime=end_datetime
-            )
-            out.dynamic_price = calculate_resource_dynamic_price(
-                db, space_inventory=item, start_datetime=start_datetime, end_datetime=end_datetime
-            )
-        if target is not None:
-            # Convert whichever price the customer would actually pay - the
-            # real-time dynamic price when one was computed, else the flat rate.
-            effective_price = out.dynamic_price if out.dynamic_price is not None else item.price
-            out.converted_price = convert_amount(effective_price, base=business.currency, target=target)
-    return results
+    target = _normalize_target_currency_or_422(target_currency)
+    return list_inventory_for_business(db, business, start_datetime, end_datetime, target)

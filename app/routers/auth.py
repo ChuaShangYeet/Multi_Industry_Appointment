@@ -7,6 +7,7 @@ table an off-the-shelf auth library would assume.
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.database import get_db
 from app.enums import AccountStatus
 from app.models.admin import AdminUser
@@ -66,7 +67,18 @@ def register_business(payload: BusinessRegisterRequest, db: Session = Depends(ge
     Self-registration always starts as Pending (PART 1.2 / PART 3.2) - an
     admin must approve it before the business can use core features. A
     token is still issued so the business can log in and check its status.
+
+    Disabled in single-tenant mode (see app.config.Settings.SINGLE_TENANT_MODE)
+    - that deployment shape provisions its one Business via
+    `python -m app.bootstrap_tenant`, not public self-signup, precisely so a
+    second Business row can never appear and break "the one business this
+    instance serves" (see app.services.tenant.get_the_tenant_business).
     """
+    if settings.SINGLE_TENANT_MODE:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            "Business self-registration is disabled in single-tenant mode - this instance already has its one business.",
+        )
     if db.query(Business).filter(Business.email == payload.email).first():
         raise HTTPException(status.HTTP_409_CONFLICT, "An account with this email already exists.")
 

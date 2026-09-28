@@ -22,6 +22,8 @@ from typing import Optional
 
 import phonenumbers
 
+from app.schemas.validators import CURRENCY_CODES
+
 _RATE_CACHE: dict[tuple[str, str], tuple[float, float]] = {}  # (base, target) -> (rate, fetched_at_monotonic)
 _CACHE_TTL_SECONDS = 300
 _REQUEST_TIMEOUT_SECONDS = 3
@@ -75,6 +77,22 @@ def get_exchange_rate(base: str, target: str) -> Optional[float]:
 
     _RATE_CACHE[cache_key] = (rate, time.monotonic())
     return rate
+
+
+def normalize_target_currency(target_currency: Optional[str]) -> Optional[str]:
+    """
+    None means "no conversion requested" - anything else must be a currency
+    code we recognize (raises ValueError, which callers - every router that
+    accepts a target_currency query param - turn into a 422). Shared by
+    every public listing endpoint (resources.py, business_context.py) so
+    they can't drift into checking this differently.
+    """
+    if target_currency is None:
+        return None
+    code = target_currency.strip().upper()
+    if code not in CURRENCY_CODES:
+        raise ValueError(f"'{target_currency}' is not a supported currency code.")
+    return code
 
 
 def convert_amount(amount: Optional[float], *, base: str, target: str) -> Optional[float]:

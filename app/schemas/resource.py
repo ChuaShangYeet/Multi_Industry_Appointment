@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Any, Optional
 
 from pydantic import BaseModel, ConfigDict
@@ -108,3 +109,12 @@ class SpaceInventoryOut(BaseModel):
     available_quantity: Optional[int] = None
     # Same idea as ServiceOut.converted_price, for a room type's nightly rate.
     converted_price: Optional[float] = None
+
+
+# --- Slots (staff-based categories only - see app.services.availability.generate_staff_based_slots) ---
+class SlotOut(BaseModel):
+    start_datetime: datetime  # UTC instant
+    # Whether at least one staff member is actually free - computed with the
+    # same check the booking endpoint itself enforces, so this can't drift
+    # from what /appointments will actually accept.
+    available: bool

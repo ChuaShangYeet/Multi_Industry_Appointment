@@ -14,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.config import settings
-from app.routers import admin, appointments, auth, businesses, resources, users
+from app.routers import admin, appointments, auth, business_context, businesses, resources, users
 
 logging.basicConfig(level=logging.INFO if not settings.DEBUG else logging.DEBUG)
 
@@ -38,6 +38,7 @@ app.include_router(auth.router, prefix=settings.API_V1_PREFIX)
 app.include_router(users.router, prefix=settings.API_V1_PREFIX)
 app.include_router(businesses.router, prefix=settings.API_V1_PREFIX)
 app.include_router(resources.router, prefix=settings.API_V1_PREFIX)
+app.include_router(business_context.router, prefix=settings.API_V1_PREFIX)
 app.include_router(appointments.router, prefix=settings.API_V1_PREFIX)
 app.include_router(admin.router, prefix=settings.API_V1_PREFIX)
 
